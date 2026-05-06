@@ -1,0 +1,124 @@
+# ============================================================
+# job_config.yaml — ETL Job Configuration
+# Source : Yahoo Finance via yfinance library
+# Target : SQL Server (Medallion: Bronze → Silver → Gold)
+# ============================================================
+
+job:
+  name: stock_market_etl
+  version: "1.0"
+  description: "Extract stock market data from Yahoo Finance (yfinance), clean and load into SQL Server"
+
+# ------------------------------------------------------------
+# INPUT — yfinance (Yahoo Finance) — NO API KEY NEEDED
+# ------------------------------------------------------------
+input:
+  source_name: yahoo_finance
+  input_type: yfinance                  # yfinance | csv | db | api
+  symbols:                              # stock tickers to pull
+    - AAPL
+    - MSFT
+    - GOOGL
+    - AMZN
+    - TSLA
+  period: "1y"                          # 1d | 5d | 1mo | 3mo | 6mo | 1y | 2y | 5y | max
+  interval: "1d"                        # 1m | 5m | 15m | 1h | 1d | 1wk | 1mo
+  auto_adjust: true                     # adjust prices for splits & dividends
+  has_header: true
+  input_schema:
+    date:   date
+    ticker: str
+    open:   float
+    high:   float
+    low:    float
+    close:  float
+    volume: int
+
+# ------------------------------------------------------------
+# REJECTION — Bad rows handling
+# ------------------------------------------------------------
+rejection:
+  rejection_path: /opt/airflow/data/rejected/
+  rejection_type: csv
+  max_rejection_rate: 0.10              # fail pipeline if >10% rows rejected
+
+# ------------------------------------------------------------
+# OUTPUT — SQL Server (Medallion layers)
+# ------------------------------------------------------------
+output:
+  output_type: sqlserver                # sqlserver | csv | parquet
+  save_mode: upsert                     # upsert | overwrite | append
+  partition_cols:
+    - date
+  layers:
+    bronze:
+      schema: bronze
+      table:  stock_prices_raw          # raw data as-is from yfinance
+    silver:
+      schema: silver
+      table:  stock_prices_clean        # cleaned & validated
+    gold:
+      schema: gold
+      table:  stock_analytics           # enriched, analytics-ready
+
+# ------------------------------------------------------------
+# ETL RULES — Transformations & Validations
+# ------------------------------------------------------------
+etl:
+  rules:
+    - name: drop_nulls
+      description: "Drop rows where any key field is NULL"
+      type: validation
+      columns: [date, ticker, open, high, low, close, volume]
+
+    - name: validate_price_positive
+      description: "All price columns must be > 0"
+      type: validation
+      condition: "open > 0 and high > 0 and low > 0 and close > 0"
+
+    - name: validate_volume_positive
+      description: "Volume must be > 0"
+      type: validation
+      condition: "volume > 0"
+
+    - name: validate_high_gte_low
+      description: "High must be >= Low"
+      type: validation
+      condition: "high >= low"
+
+    - name: cast_types
+      description: "Ensure correct dtypes (float, int, date)"
+      type: transformation
+
+    - name: add_ingestion_timestamp
+      description: "Add UTC timestamp when data was ingested"
+      type: transformation
+      expression: "datetime.utcnow() AS ingested_at"
+
+    - name: calculate_daily_return
+      description: "Daily % return: (close - open) / open * 100"
+      type: transformation
+      expression: "(close - open) / open * 100 AS daily_return_pct"
+
+    - name: calculate_price_range
+      description: "Daily price range: high - low"
+      type: transformation
+      expression: "high - low AS price_range"
+
+    - name: calculate_vwap
+      description: "Volume Weighted Average Price: (high+low+close)/3"
+      type: transformation
+      expression: "(high + low + close) / 3 AS vwap"
+
+# ------------------------------------------------------------
+# QUALITY CHECKS — Run after loading
+# ------------------------------------------------------------
+quality:
+  checks:
+    - rows_source          # total rows pulled from yfinance
+    - rows_valid           # rows that passed all validations
+    - rows_rejected        # rows that failed validation
+    - rejection_rate       # must be <= max_rejection_rate
+    - close_not_null       # no nulls in close price
+    - volume_positive      # all volume values > 0
+    - no_duplicate_rows    # no (date, ticker) duplicates in silver

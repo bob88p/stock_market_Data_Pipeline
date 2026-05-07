@@ -8,12 +8,12 @@ from sqlalchemy import create_engine, text
 
 from utils.config_loader import load_config
 from extract.reader import read_all
-from transformation.clean import clean
-from transformation.check import check
+from transformation.clean import clean as clean_df
+from transformation.check import check as check_df
 from load.load import load_to_stage
 from load.merge import merge_stage_to_bronze
 
-config = load_config("config/job_config.yaml")
+config = load_config("/opt/airflow/config/job_config.yaml")
 
 
 
@@ -104,7 +104,7 @@ def medallion_pipeline():
         paths = get_paths()
 
         df = pd.read_parquet(paths["raw"])
-        valid, rejected = clean(df)
+        valid, rejected = clean_df(df)
 
         if valid.empty:
             raise ValueError("No valid data")
@@ -120,7 +120,7 @@ def medallion_pipeline():
 
         df = pd.read_parquet(paths["valid"])
 
-        report = check(
+        report = check_df(
             df,
             stage_name="Silver Clean Data",
             expected_cols=["trade_date", "ticker", "open_price", "high_price", "low_price", "close_price", "volume"]

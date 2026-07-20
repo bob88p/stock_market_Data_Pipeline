@@ -3,8 +3,7 @@
 A production-ready ETL pipeline for stock market data using **Apache Airflow**, **Yahoo Finance (yfinance)**, and **SQL Server** with a Medallion Architecture (Stage → Bronze → Silver → Gold).
 
 ## Architecture
-6.png
-```
+<img src="6.png" width="250">```
 yfinance API → Extract → Clean → Validate → Stage → Bronze → Silver → Gold
 ```
 
